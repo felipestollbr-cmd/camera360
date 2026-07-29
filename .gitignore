@@ -1,0 +1,24 @@
+venv/
+__pycache__/
+*.pyc
+
+# Artefatos de build do executavel/instalador (gerados por build_scripts + PyInstaller + Inno Setup)
+dist/
+dist_native/
+build/
+Output/
+
+# FFmpeg (build "release essentials", ~90MB extraido) usado pelo stream
+# Wi-Fi da GoPro - baixado a parte (build_scripts/diagnose_gopro_stream.py
+# ou gopro_controller.py explicam onde/como), nao versionar binario grande
+ffmpeg-*/
+
+# Fotos/videos capturados pelo app (e os sidecars de localizacao)
+capturas/*.jpg
+capturas/*.mp4
+capturas/*.location.txt
+
+# Credenciais do Webex (Client ID/Secret) - nunca versionar
+webex_config.json
+webex_token.json
+webex_token.json.bak
