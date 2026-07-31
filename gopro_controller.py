@@ -9,18 +9,18 @@ Interface compatível com CameraController (connect/get_frame/capture_photo/
 etc.) para o main.py poder usar qualquer uma das duas sem mudar o resto do
 código.
 """
-import glob
+import json
 import os
-import shutil
 import socket
 import subprocess
-import sys
 import threading
 import time
 import urllib.error
 import urllib.request
 
 import numpy as np
+
+from ffmpeg_utils import find_ffmpeg
 
 BASE_URL = "http://10.5.5.9"
 MEDIA_BASE_URL = "http://10.5.5.9:8080"
@@ -83,23 +83,6 @@ VALID_FPS_FOR_RESOLUTION = {
     "960p": ["240fps", "200fps", "120fps", "100fps"],
     "720p": ["240fps", "200fps", "60fps", "50fps"],
 }
-
-
-def _find_ffmpeg():
-    override = os.environ.get("CAMERA360_FFMPEG_PATH")
-    if override and os.path.isfile(override):
-        return override
-
-    # Build "release essentials" da gyan.dev, extraído dentro da própria
-    # pasta do projeto (ou ao lado do .exe empacotado) - assim funciona sem
-    # precisar configurar PATH/variável de ambiente em outra máquina.
-    base_dir = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) \
-        else os.path.dirname(os.path.abspath(__file__))
-    for candidate in glob.glob(os.path.join(base_dir, "ffmpeg-*", "bin", "ffmpeg.exe")):
-        if os.path.isfile(candidate):
-            return candidate
-
-    return shutil.which("ffmpeg")
 
 
 def _get_local_ip_for_gopro():
@@ -196,7 +179,7 @@ class GoProWifiController:
             sock.close()
 
     def _live_view_loop(self, fps):
-        ffmpeg_path = _find_ffmpeg()
+        ffmpeg_path = find_ffmpeg()
         if not ffmpeg_path:
             self.last_error = (
                 "FFmpeg não encontrado - instale (ex.: gyan.dev/ffmpeg/builds) "
@@ -327,7 +310,6 @@ class GoProWifiController:
         Retorna (ok, resolução_aplicada, fps_aplicado) - se ok for False,
         os dois últimos mostram o que a câmera manteve/aplicou de verdade.
         """
-        import json
         resolution_value = VIDEO_RESOLUTIONS[resolution_label]
         fps_value = VIDEO_FRAME_RATES[fps_label]
 
@@ -353,6 +335,28 @@ class GoProWifiController:
         ok = actual_resolution_value == resolution_value and actual_fps_value == fps_value
         return ok, applied_resolution, applied_fps
 
+    def _request(self, url, timeout=5):
+        try:
+            return urllib.request.urlopen(url, timeout=timeout)
+        except urllib.error.HTTPError as e:
+            body = e.read().decode(errors="replace")
+            raise Exception(f"{url} -> HTTP {e.code}: {body}") from None
+
+    def _newest_media_file(self, ext):
+        """Acha o arquivo mais recente (por timestamp de criação) no cartão
+        com a extensão dada, buscando na API de mídia da câmera."""
+        with self._request(f"{MEDIA_BASE_URL}/gp/gpMediaList", timeout=10) as resp:
+            media = json.loads(resp.read().decode())
+
+        newest = None
+        for folder in media.get("media", []):
+            for f in folder.get("fs", []):
+                if not f["n"].upper().endswith(ext):
+                    continue
+                if newest is None or int(f.get("cre", 0)) > int(newest[1].get("cre", 0)):
+                    newest = (folder["d"], f)
+        return newest
+
     def capture_photo(self):
         """
         Troca pro modo Foto, aciona o obturador, espera a câmera gravar no
@@ -362,36 +366,52 @@ class GoProWifiController:
         if not self.connected:
             raise Exception("GoPro não conectada")
 
-        def _get(url, timeout=5):
-            try:
-                return urllib.request.urlopen(url, timeout=timeout)
-            except urllib.error.HTTPError as e:
-                body = e.read().decode(errors="replace")
-                raise Exception(f"{url} -> HTTP {e.code}: {body}") from None
-
         # Trocar de modo pra Foto enquanto o live view Wi-Fi (gpStream) está
         # ativo pode não ser aceito pela câmera (testar: pode precisar
         # parar o stream primeiro) - por isso cada passo tem sua própria
         # mensagem de erro, em vez de um "falhou" genérico.
-        _get(f"{BASE_URL}/gp/gpControl/command/mode?p=1")
-        _get(f"{BASE_URL}/gp/gpControl/command/sub_mode?mode=1&sub_mode=1")
-        _get(f"{BASE_URL}/gp/gpControl/command/shutter?p=1")
+        self._request(f"{BASE_URL}/gp/gpControl/command/mode?p=1")
+        self._request(f"{BASE_URL}/gp/gpControl/command/sub_mode?mode=1&sub_mode=1")
+        self._request(f"{BASE_URL}/gp/gpControl/command/shutter?p=1")
         time.sleep(2.0)  # tempo pra processar e gravar no cartão
 
-        with _get(f"{MEDIA_BASE_URL}/gp/gpMediaList", timeout=10) as resp:
-            import json
-            media = json.loads(resp.read().decode())
-
-        newest = None
-        for folder in media.get("media", []):
-            for f in folder.get("fs", []):
-                if not f["n"].upper().endswith(".JPG"):
-                    continue
-                if newest is None or int(f.get("cre", 0)) > int(newest[1].get("cre", 0)):
-                    newest = (folder["d"], f)
+        newest = self._newest_media_file(".JPG")
         if newest is None:
             raise Exception("Foto capturada, mas não encontrada no cartão")
         folder_name, file_info = newest
         file_url = f"{MEDIA_BASE_URL}/videos/DCIM/{folder_name}/{file_info['n']}"
-        with _get(file_url, timeout=15) as resp:
+        with self._request(file_url, timeout=15) as resp:
+            return resp.read()
+
+    def start_video_recording(self):
+        """
+        Troca pro modo Vídeo (sub_mode 0 = gravação normal, não timelapse)
+        e aciona o obturador pra começar a gravar no cartão. A qualidade
+        gravada é a última aplicada via apply_video_settings() (resolução/
+        fps) - não tem relação com o stream de preview usado no live view.
+        """
+        if not self.connected:
+            raise Exception("GoPro não conectada")
+        self._request(f"{BASE_URL}/gp/gpControl/command/mode?p=0")
+        self._request(f"{BASE_URL}/gp/gpControl/command/sub_mode?mode=0&sub_mode=0")
+        self._request(f"{BASE_URL}/gp/gpControl/command/shutter?p=1")
+
+    def stop_video_recording(self):
+        """
+        Para a gravação e baixa o .MP4 mais recente do cartão. A câmera
+        leva um instante pra terminar de fechar/indexar o arquivo depois do
+        comando de parar, por isso a pequena espera antes de consultar a
+        lista de mídia.
+        """
+        if not self.connected:
+            raise Exception("GoPro não conectada")
+        self._request(f"{BASE_URL}/gp/gpControl/command/shutter?p=0")
+        time.sleep(2.0)
+
+        newest = self._newest_media_file(".MP4")
+        if newest is None:
+            raise Exception("Vídeo gravado, mas não encontrado no cartão")
+        folder_name, file_info = newest
+        file_url = f"{MEDIA_BASE_URL}/videos/DCIM/{folder_name}/{file_info['n']}"
+        with self._request(file_url, timeout=60) as resp:
             return resp.read()

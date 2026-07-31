@@ -13,12 +13,10 @@ Output/
 # ou gopro_controller.py explicam onde/como), nao versionar binario grande
 ffmpeg-*/
 
-# Fotos/videos capturados pelo app (e os sidecars de localizacao)
+# Fotos/videos capturados pelo app (e os sidecars de localizacao) - inclui
+# os brutos da GoPro (capturas/raw/) e os finais processados (capturas/final/)
 capturas/*.jpg
 capturas/*.mp4
 capturas/*.location.txt
-
-# Credenciais do Webex (Client ID/Secret) - nunca versionar
-webex_config.json
-webex_token.json
-webex_token.json.bak
+capturas/raw/
+capturas/final/

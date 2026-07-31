@@ -1,3 +1,5 @@
 opencv-python-headless
 Pillow
 pygphoto2
+pyserial
+qrcode

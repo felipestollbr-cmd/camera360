@@ -1,7 +1,7 @@
 """
 Componentes visuais reutilizáveis pra dar ao Camera360 uma cara mais
-profissional (inspirado no app desktop do Webex): botões em pílula com
-ícone desenhado + texto, e painéis em formato de card com título.
+profissional: botões em pílula com ícone desenhado + texto, e painéis em
+formato de card com título.
 Desenhados via Canvas (não dá pra fazer pílula/cantos arredondados de
 verdade com ttk.Button no Windows).
 """
