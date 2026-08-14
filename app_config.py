@@ -17,6 +17,8 @@ DEFAULT_CONFIG = {
     "preview_fps": 10,
     "share_port": 8090,
     "music_path": "",
+    "license_api_url": "http://127.0.0.1:8000",
+    "license_check_interval_minutes": 30,
     "speed_profile": DEFAULT_SPEED_PROFILE,
     "kiosk": {
         "countdown_seconds": 3,

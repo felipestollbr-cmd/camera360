@@ -10,12 +10,28 @@ import subprocess
 import tempfile
 import time
 
+from PIL import Image, ImageDraw, ImageFont
+
 from ffmpeg_utils import find_ffmpeg, find_ffprobe
 
 DEFAULT_SPEED_PROFILE = [
     {"start_pct": 0.0, "end_pct": 0.35, "speed": 1.0},
     {"start_pct": 0.35, "end_pct": 0.65, "speed": 0.35},
     {"start_pct": 0.65, "end_pct": 1.0, "speed": 1.0},
+]
+
+# Resolução de saída por formato de vídeo do evento - cobre os usos comuns
+# (16:9 pra TV/download normal, 9:16 pra Stories/Reels, 1:1 pra feed).
+ASPECT_RATIOS = {
+    "16:9": (1920, 1080),
+    "9:16": (1080, 1920),
+    "1:1": (1080, 1080),
+}
+
+_FONT_CANDIDATES = [
+    r"C:\Windows\Fonts\segoeuib.ttf",
+    r"C:\Windows\Fonts\segoeui.ttf",
+    r"C:\Windows\Fonts\arial.ttf",
 ]
 
 
@@ -40,6 +56,20 @@ def probe_duration(path):
     if result.returncode != 0:
         raise VideoProcessingError(result.stderr.decode(errors="replace"))
     return float(result.stdout.decode().strip())
+
+
+def probe_dimensions(path):
+    """Largura/altura (px) do vídeo, via ffprobe."""
+    ffprobe_path = find_ffprobe()
+    if not ffprobe_path:
+        raise VideoProcessingError("ffprobe não encontrado (bundle do ffmpeg incompleto)")
+    cmd = [ffprobe_path, "-v", "error", "-select_streams", "v:0",
+           "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", path]
+    result = subprocess.run(cmd, capture_output=True)
+    if result.returncode != 0:
+        raise VideoProcessingError(result.stderr.decode(errors="replace"))
+    width_str, height_str = result.stdout.decode().strip().split("x")
+    return int(width_str), int(height_str)
 
 
 def apply_speed_profile(input_path, profile, output_path):
@@ -128,25 +158,155 @@ def mix_background_music(video_path, music_path, output_path):
     return output_path
 
 
-def process_capture(raw_path, output_dir, speed_profile=None, music_path=None):
+def apply_aspect_ratio(input_path, aspect_ratio, output_path):
     """
-    Pipeline completo: velocidade -> música (se configurada) -> retorna o
-    caminho do arquivo final. Chamar de uma thread de worker (o
-    processamento leva alguns segundos, não pode travar a UI do totem).
+    Ajusta o vídeo pro formato escolhido no evento (16:9/9:16/1:1),
+    cortando o centro do frame original (o giro fica sempre com a pessoa
+    centralizada, então cortar as laterais/topo-base mantém ela no quadro)
+    e escalando pra uma resolução de saída padrão.
+    """
+    ffmpeg_path = find_ffmpeg()
+    if not ffmpeg_path:
+        raise VideoProcessingError("ffmpeg não encontrado (bundle do ffmpeg incompleto)")
+
+    target_w, target_h = ASPECT_RATIOS.get(aspect_ratio, ASPECT_RATIOS["16:9"])
+    src_w, src_h = probe_dimensions(input_path)
+    target_ratio = target_w / target_h
+    src_ratio = src_w / src_h
+
+    if abs(target_ratio - src_ratio) < 0.01:
+        vf = f"scale={target_w}:{target_h}"
+    elif target_ratio < src_ratio:
+        # saída mais estreita que a fonte (ex.: 16:9 -> 9:16) - corta os lados
+        crop_w = int(src_h * target_ratio)
+        vf = f"crop={crop_w}:{src_h}:(iw-{crop_w})/2:0,scale={target_w}:{target_h}"
+    else:
+        # saída mais larga que a fonte - corta topo/base
+        crop_h = int(src_w / target_ratio)
+        vf = f"crop={src_w}:{crop_h}:0:(ih-{crop_h})/2,scale={target_w}:{target_h}"
+
+    _run([
+        ffmpeg_path, "-y", "-loglevel", "error", "-i", input_path,
+        "-vf", vf, "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        output_path,
+    ])
+    return output_path
+
+
+def _load_font(size):
+    for candidate in _FONT_CANDIDATES:
+        if os.path.isfile(candidate):
+            return ImageFont.truetype(candidate, size=size)
+    return ImageFont.load_default()
+
+
+def render_branding_overlay(event, size):
+    """
+    Gera uma imagem RGBA (mesmo tamanho do vídeo final) com o PNG e/ou o
+    texto configurados no evento, pra sobrepor no vídeo com um único passo
+    de overlay do ffmpeg. Retorna None se o evento não tem nenhuma marca
+    configurada (nem texto nem PNG) - nesse caso não há o que sobrepor.
+    """
+    text = (event or {}).get("overlay_text") or ""
+    png_path = (event or {}).get("overlay_png_path") or ""
+    has_png = png_path and os.path.isfile(png_path)
+    if not text and not has_png:
+        return None
+
+    w, h = size
+    canvas = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+
+    if has_png:
+        logo = Image.open(png_path).convert("RGBA")
+        # Logo ocupa no máximo 30% da largura do vídeo, ancorado no canto
+        # superior esquerdo - funciona tanto pra um selo/logo pequeno
+        # quanto (se o operador preferir) pra uma moldura maior.
+        max_w = int(w * 0.3)
+        if logo.width > max_w:
+            ratio = max_w / logo.width
+            logo = logo.resize((max_w, max(1, int(logo.height * ratio))), Image.Resampling.LANCZOS)
+        canvas.paste(logo, (24, 24), logo)
+
+    if text:
+        draw = ImageDraw.Draw(canvas)
+        font_size = max(18, int(h * 0.045))
+        font = _load_font(font_size)
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        band_h = text_h + 40
+        # Faixa semi-opaca na base do vídeo pra garantir legibilidade do
+        # texto em cima de qualquer fundo (mesmo raciocínio da régua do
+        # protótipo original de medição, agora reaproveitado pra branding).
+        draw.rectangle([0, h - band_h, w, h], fill=(0, 0, 0, 140))
+        draw.text(((w - text_w) / 2, h - band_h + 20), text, font=font, fill=(255, 255, 255, 255))
+
+    return canvas
+
+
+def apply_event_branding(input_path, event, output_path):
+    """Sobrepõe o PNG/texto do evento (se houver) no vídeo já ajustado ao
+    formato escolhido. Sem nada configurado, só copia o arquivo adiante."""
+    size = probe_dimensions(input_path)
+    overlay_img = render_branding_overlay(event, size)
+    if overlay_img is None:
+        os.replace(input_path, output_path)
+        return output_path
+
+    ffmpeg_path = find_ffmpeg()
+    if not ffmpeg_path:
+        raise VideoProcessingError("ffmpeg não encontrado (bundle do ffmpeg incompleto)")
+
+    work_dir = tempfile.mkdtemp(prefix="camera360_branding_")
+    overlay_path = os.path.join(work_dir, "overlay.png")
+    try:
+        overlay_img.save(overlay_path)
+        _run([
+            ffmpeg_path, "-y", "-loglevel", "error",
+            "-i", input_path, "-i", overlay_path,
+            "-filter_complex", "overlay=0:0", "-an",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            output_path,
+        ])
+        return output_path
+    finally:
+        if os.path.exists(overlay_path):
+            os.remove(overlay_path)
+        os.rmdir(work_dir)
+
+
+def process_capture(raw_path, output_dir, speed_profile=None, music_path=None, event=None):
+    """
+    Pipeline completo: velocidade -> formato/marca do evento (se houver) ->
+    música (se configurada) -> retorna o caminho do arquivo final. Chamar
+    de uma thread de worker (o processamento leva alguns segundos, não pode
+    travar a UI do totem).
     """
     profile = speed_profile or DEFAULT_SPEED_PROFILE
     os.makedirs(output_dir, exist_ok=True)
     timestamp = int(time.time())
 
-    sped_path = os.path.join(output_dir, f"spin_{timestamp}_sped.mp4")
-    apply_speed_profile(raw_path, profile, sped_path)
+    current_path = os.path.join(output_dir, f"spin_{timestamp}_sped.mp4")
+    apply_speed_profile(raw_path, profile, current_path)
 
-    if not music_path or not os.path.isfile(music_path):
-        final_path = os.path.join(output_dir, f"spin_{timestamp}.mp4")
-        os.replace(sped_path, final_path)
-        return final_path
+    aspect_ratio = (event or {}).get("aspect_ratio")
+    if aspect_ratio and aspect_ratio != "16:9":
+        cropped_path = os.path.join(output_dir, f"spin_{timestamp}_crop.mp4")
+        apply_aspect_ratio(current_path, aspect_ratio, cropped_path)
+        os.remove(current_path)
+        current_path = cropped_path
+
+    if event and (event.get("overlay_text") or event.get("overlay_png_path")):
+        branded_path = os.path.join(output_dir, f"spin_{timestamp}_branded.mp4")
+        apply_event_branding(current_path, event, branded_path)
+        if os.path.exists(current_path) and current_path != branded_path:
+            os.remove(current_path)
+        current_path = branded_path
 
     final_path = os.path.join(output_dir, f"spin_{timestamp}.mp4")
-    mix_background_music(sped_path, music_path, final_path)
-    os.remove(sped_path)
+    if not music_path or not os.path.isfile(music_path):
+        os.replace(current_path, final_path)
+        return final_path
+
+    mix_background_music(current_path, music_path, final_path)
+    os.remove(current_path)
     return final_path

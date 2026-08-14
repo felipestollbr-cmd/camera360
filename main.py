@@ -31,6 +31,8 @@ from gopro_controller import GoProWifiController
 import location as geo
 from widgets import PillButton, Card, BG_CARD
 import app_config
+import event_manager
+import license_client
 import motor_controller
 import video_processor
 import qr_share
@@ -60,6 +62,8 @@ STATE_PROCESSING = "processing"
 STATE_PREVIEW = "preview"
 STATE_QR = "qr"
 STATE_SETTINGS = "settings"
+STATE_EVENTS = "events"
+STATE_ACTIVATION = "activation"
 
 
 class Camera360Kiosk:
@@ -74,6 +78,7 @@ class Camera360Kiosk:
         self._is_fullscreen = True
 
         self.config = app_config.load_config()
+        self.events_data = event_manager.load_events()
         self.motor = motor_controller.MotorController(self.config["motor"])
         self.share_backend = qr_share.LocalShareBackend(OUTPUT_DIR, port=self.config["share_port"])
 
@@ -100,10 +105,9 @@ class Camera360Kiosk:
         self._build_screens()
         self.root.update_idletasks()
 
-        self._set_state(STATE_IDLE)
-        self.connect_camera()
-        threading.Thread(target=self.motor.connect, daemon=True).start()
-        self.update_video()
+        self._update_active_event_label()
+        self._set_state(STATE_ACTIVATION)
+        self._check_license(initial=True)
 
     # --- estilo / infraestrutura de telas -------------------------------
 
@@ -140,11 +144,13 @@ class Camera360Kiosk:
         self.container.columnconfigure(0, weight=1)
 
         self.screens = {}
+        self._build_activation_screen()
         self._build_camera_screen()
         self._build_processing_screen()
         self._build_preview_screen()
         self._build_qr_screen()
         self._build_settings_screen()
+        self._build_events_screen()
 
     def _add_screen(self, name, frame):
         frame.grid(row=0, column=0, sticky="nsew")
@@ -177,10 +183,113 @@ class Camera360Kiosk:
         elif state == STATE_SETTINGS:
             self._refresh_settings_fields()
             self.screens["settings"].tkraise()
+        elif state == STATE_EVENTS:
+            self._refresh_events_list()
+            self.screens["events"].tkraise()
+        elif state == STATE_ACTIVATION:
+            self.screens["activation"].tkraise()
 
     def _toggle_fullscreen(self, _event=None):
         self._is_fullscreen = not self._is_fullscreen
         self.root.attributes("-fullscreen", self._is_fullscreen)
+
+    # --- tela de ativação da licença (trava o app até validar online) -----
+
+    def _build_activation_screen(self):
+        screen = tk.Frame(self.container, bg=BG_ROOT)
+        self._add_screen("activation", screen)
+
+        center = tk.Frame(screen, bg=BG_ROOT)
+        center.place(relx=0.5, rely=0.5, anchor="center")
+
+        tk.Label(center, text="Camera360", font=("Segoe UI", 28, "bold"),
+                 bg=BG_ROOT, fg=FG_TEXT).pack(pady=(0, 4))
+        self.activation_status_label = tk.Label(
+            center, text="Verificando licença...", font=("Segoe UI", 13),
+            bg=BG_ROOT, fg=FG_MUTED, wraplength=420, justify=tk.CENTER)
+        self.activation_status_label.pack(pady=(0, 16))
+
+        self.activation_form = tk.Frame(center, bg=BG_ROOT)
+        ttk.Label(self.activation_form, text="Chave de licença", style="Dark.TLabel").pack(anchor="w")
+        self.activation_key_entry = ttk.Entry(self.activation_form, style="Dark.TEntry", width=32,
+                                               font=("Segoe UI", 14))
+        self.activation_key_entry.pack(pady=(4, 12))
+        PillButton(self.activation_form, text="Ativar", icon="play", variant="primary",
+                   width=200, height=48, command=self._activate_license_from_form).pack()
+
+        self.activation_hwid_label = tk.Label(
+            center, text="", font=("Segoe UI", 9), bg=BG_ROOT, fg=FG_MUTED)
+        self.activation_hwid_label.pack(pady=(20, 0))
+
+    def _check_license(self, initial=False):
+        api_url = self.config.get("license_api_url", "")
+
+        def worker():
+            result = license_client.validate(api_url)
+            self.root.after(0, lambda: self._on_license_check_result(result, initial))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_license_check_result(self, result, initial):
+        if result.get("valid"):
+            if initial:
+                self._start_app()
+            else:
+                self._schedule_periodic_license_check()
+            return
+
+        # Licença inválida/expirada/revogada, ou sem internet - trava o
+        # totem na tela de ativação, mesmo que já estivesse rodando (a
+        # revalidação periódica também cai aqui se a licença deixar de ser
+        # válida no meio do uso).
+        self.running = False
+        self._set_state(STATE_ACTIVATION)
+        saved_key = license_client.get_saved_license_key()
+        message = result.get("message", "Licença inválida")
+        if saved_key:
+            self.activation_status_label.config(text=f"{message}\nChave: {saved_key}")
+            self.activation_key_entry.delete(0, tk.END)
+            self.activation_key_entry.insert(0, saved_key)
+        else:
+            self.activation_status_label.config(text=message)
+        self.activation_form.pack()
+        self.activation_hwid_label.config(text=f"ID desta máquina: {license_client.get_hardware_id()}")
+
+    def _activate_license_from_form(self):
+        key = self.activation_key_entry.get().strip()
+        if not key:
+            return
+        api_url = self.config.get("license_api_url", "")
+        self.activation_status_label.config(text="Ativando...")
+        self.activation_form.pack_forget()
+
+        def worker():
+            result = license_client.activate(api_url, key)
+            self.root.after(0, lambda: self._on_activation_result(result))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_activation_result(self, result):
+        if result.get("valid"):
+            self._start_app()
+            return
+        self.activation_status_label.config(text=result.get("message", "Não foi possível ativar"))
+        self.activation_form.pack()
+
+    def _start_app(self):
+        """Só roda depois da primeira validação de licença dar certo -
+        conecta câmera/motor e libera o fluxo normal do totem."""
+        self.running = True
+        self.activation_form.pack_forget()
+        self._set_state(STATE_IDLE)
+        self.connect_camera()
+        threading.Thread(target=self.motor.connect, daemon=True).start()
+        self.update_video()
+        self._schedule_periodic_license_check()
+
+    def _schedule_periodic_license_check(self):
+        interval_minutes = self.config.get("license_check_interval_minutes", 30)
+        self.root.after(int(interval_minutes) * 60 * 1000, lambda: self._check_license(initial=False))
 
     # --- tela principal: idle / contagem / gravação ----------------------
 
@@ -198,6 +307,8 @@ class Camera360Kiosk:
         self.status_label = ttk.Label(top_body, text="Conectando...", style="Muted.TLabel")
         self.status_label.pack(side=tk.LEFT)
         self._draw_status_dot(False)
+        self.active_event_label = ttk.Label(top_body, text="", style="Muted.TLabel")
+        self.active_event_label.pack(side=tk.LEFT, padx=(16, 0))
         self.fix_camera_btn = PillButton(top_body, text="Corrigir e tentar de novo",
                                           variant="ghost", width=200, height=28,
                                           font=("Segoe UI", 9, "bold"),
@@ -403,7 +514,12 @@ class Camera360Kiosk:
                     raw_path = self._record_from_preview(duration)
                 self.root.after(0, lambda: self._on_recording_done(raw_path, None))
             except Exception as e:
-                self.root.after(0, lambda: self._on_recording_done(None, str(e)))
+                # Captura a mensagem AQUI dentro do except: "e" some assim
+                # que o bloco termina (comportamento padrão do Python), e o
+                # lambda só roda depois, agendado via root.after - sem isso
+                # dá NameError ao tentar ler "e" de dentro do lambda.
+                err_msg = str(e)
+                self.root.after(0, lambda: self._on_recording_done(None, err_msg))
 
         threading.Thread(target=worker, daemon=True).start()
         self._tick_recording_progress()
@@ -456,15 +572,19 @@ class Camera360Kiosk:
         self._raw_video_path = raw_path
         self._set_state(STATE_PROCESSING)
 
+        active_event = event_manager.get_active_event(self.events_data)
+
         def worker():
             try:
                 final_path = video_processor.process_capture(
                     raw_path, OUTPUT_DIR,
                     speed_profile=self.config.get("speed_profile"),
-                    music_path=self.config.get("music_path") or None)
+                    music_path=self.config.get("music_path") or None,
+                    event=active_event)
                 self.root.after(0, lambda: self._on_processing_done(final_path, None))
             except Exception as e:
-                self.root.after(0, lambda: self._on_processing_done(None, str(e)))
+                err_msg = str(e)
+                self.root.after(0, lambda: self._on_processing_done(None, err_msg))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -593,7 +713,8 @@ class Camera360Kiosk:
                 qr_img = qr_share.generate_qr_image(url)
                 self.root.after(0, lambda: self._display_qr(qr_img, url))
             except Exception as e:
-                self.root.after(0, lambda: self._display_qr(None, str(e)))
+                err_msg = str(e)
+                self.root.after(0, lambda: self._display_qr(None, err_msg))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -723,6 +844,8 @@ class Camera360Kiosk:
         actions.pack(fill=tk.X, pady=(4, 0))
         PillButton(actions, text="Salvar configurações", icon="calendar", variant="primary",
                    width=220, height=48, command=self._save_settings).pack(side=tk.LEFT)
+        PillButton(actions, text="Eventos", icon="camera", variant="ghost",
+                   width=160, height=48, command=lambda: self._set_state(STATE_EVENTS)).pack(side=tk.LEFT, padx=8)
         PillButton(actions, text="Abrir pasta de mídia", icon="folder", variant="ghost",
                    width=200, height=48, command=self.open_media_folder).pack(side=tk.LEFT, padx=8)
         PillButton(actions, text="Sair do totem", icon="power", variant="danger",
@@ -800,6 +923,127 @@ class Camera360Kiosk:
 
     def open_media_folder(self):
         os.startfile(os.path.abspath(SAVE_DIR))
+
+    # --- tela de eventos (formato do vídeo + marca por evento) -------------
+
+    def _build_events_screen(self):
+        screen = tk.Frame(self.container, bg=BG_ROOT)
+        self._add_screen("events", screen)
+
+        header = ttk.Frame(screen, style="Dark.TFrame")
+        header.pack(fill=tk.X)
+        ttk.Label(header, text="Eventos", style="Brand.TLabel").pack(side=tk.LEFT, padx=16, pady=10)
+        PillButton(header, text="Voltar", variant="ghost", width=110, height=32,
+                   command=lambda: self._set_state(STATE_SETTINGS)).pack(side=tk.RIGHT, padx=16, pady=8)
+
+        body = tk.Frame(screen, bg=BG_ROOT)
+        body.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+
+        list_card = Card(body)
+        list_card.pack(fill=tk.BOTH, expand=True, pady=(0, 12))
+        ttk.Label(list_card.content, text="Eventos salvos", style="BrandCard.TLabel").pack(anchor="w", pady=(0, 8))
+        self.events_list_frame = tk.Frame(list_card.content, bg=BG_CARD)
+        self.events_list_frame.pack(fill=tk.BOTH, expand=True)
+
+        create_card = Card(body)
+        create_card.pack(fill=tk.X)
+        c = create_card.content
+        ttk.Label(c, text="Criar evento", style="BrandCard.TLabel").grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
+
+        ttk.Label(c, text="Nome do evento", style="MutedCard.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 6))
+        self.event_name_entry = ttk.Entry(c, style="Dark.TEntry", width=30)
+        self.event_name_entry.grid(row=1, column=1, columnspan=2, sticky="w", padx=(0, 20))
+
+        ttk.Label(c, text="Formato do vídeo", style="MutedCard.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        self.event_aspect_combo = ttk.Combobox(c, state="readonly", style="Dark.TCombobox", width=10,
+                                                values=event_manager.ASPECT_RATIO_CHOICES)
+        self.event_aspect_combo.current(0)
+        self.event_aspect_combo.grid(row=2, column=1, sticky="w", pady=(8, 0))
+        ttk.Label(c, text="(16:9 normal, 9:16 vertical/Stories, 1:1 quadrado)",
+                  style="MutedCard.TLabel", font=("Segoe UI", 8)).grid(row=2, column=2, columnspan=2, sticky="w", pady=(8, 0))
+
+        ttk.Label(c, text="Texto na tela (opcional)", style="MutedCard.TLabel").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        self.event_text_entry = ttk.Entry(c, style="Dark.TEntry", width=40)
+        self.event_text_entry.grid(row=3, column=1, columnspan=3, sticky="w", pady=(8, 0))
+
+        ttk.Label(c, text="Imagem/logo PNG (opcional)", style="MutedCard.TLabel").grid(row=4, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        self.event_png_label = ttk.Label(c, text="Nenhuma imagem escolhida", style="MutedCard.TLabel")
+        self.event_png_label.grid(row=4, column=1, columnspan=2, sticky="w", pady=(8, 0))
+        PillButton(c, text="Escolher PNG", variant="ghost", width=140, height=32,
+                   bg=BG_CARD, command=self._browse_event_png).grid(row=4, column=3, pady=(8, 0))
+
+        PillButton(c, text="Criar evento", icon="calendar", variant="primary",
+                   width=200, height=44, command=self._create_event).grid(
+            row=5, column=0, columnspan=4, pady=(16, 0), sticky="w")
+
+        self._event_png_source = None
+
+    def _browse_event_png(self):
+        path = filedialog.askopenfilename(
+            title="Escolher imagem (PNG)", filetypes=[("PNG", "*.png"), ("Todos os arquivos", "*.*")])
+        if path:
+            self._event_png_source = path
+            self.event_png_label.config(text=os.path.basename(path))
+
+    def _create_event(self):
+        name = self.event_name_entry.get().strip()
+        if not name:
+            messagebox.showerror("Eventos", "Dê um nome pro evento.")
+            return
+        event_manager.create_event(
+            self.events_data, name,
+            aspect_ratio=self.event_aspect_combo.get(),
+            overlay_text=self.event_text_entry.get().strip(),
+            overlay_png_source=self._event_png_source)
+        event_manager.save_events(self.events_data)
+
+        self.event_name_entry.delete(0, tk.END)
+        self.event_text_entry.delete(0, tk.END)
+        self.event_aspect_combo.current(0)
+        self._event_png_source = None
+        self.event_png_label.config(text="Nenhuma imagem escolhida")
+
+        self._refresh_events_list()
+        self._update_active_event_label()
+
+    def _refresh_events_list(self):
+        for widget in self.events_list_frame.winfo_children():
+            widget.destroy()
+
+        if not self.events_data["events"]:
+            ttk.Label(self.events_list_frame, text="Nenhum evento criado ainda.",
+                      style="MutedCard.TLabel").pack(anchor="w")
+            return
+
+        active_id = self.events_data.get("active_event_id")
+        for event in self.events_data["events"]:
+            row = tk.Frame(self.events_list_frame, bg=BG_CARD)
+            row.pack(fill=tk.X, pady=(0, 8))
+            is_active = event["id"] == active_id
+            label_text = f"{event['name']}  ({event['aspect_ratio']})" + ("  ✓ ativo" if is_active else "")
+            ttk.Label(row, text=label_text, style="DarkCard.TLabel" if is_active else "MutedCard.TLabel"
+                      ).pack(side=tk.LEFT, padx=(0, 12))
+            if not is_active:
+                PillButton(row, text="Usar", variant="ghost", width=90, height=30, bg=BG_CARD,
+                           command=lambda eid=event["id"]: self._activate_event(eid)).pack(side=tk.LEFT, padx=4)
+            PillButton(row, text="Excluir", variant="danger", width=90, height=30, bg=BG_CARD,
+                       command=lambda eid=event["id"]: self._delete_event(eid)).pack(side=tk.LEFT, padx=4)
+
+    def _activate_event(self, event_id):
+        event_manager.set_active_event(self.events_data, event_id)
+        event_manager.save_events(self.events_data)
+        self._refresh_events_list()
+        self._update_active_event_label()
+
+    def _delete_event(self, event_id):
+        event_manager.delete_event(self.events_data, event_id)
+        event_manager.save_events(self.events_data)
+        self._refresh_events_list()
+        self._update_active_event_label()
+
+    def _update_active_event_label(self):
+        active = event_manager.get_active_event(self.events_data)
+        self.active_event_label.config(text=f"Evento: {active['name']}" if active else "")
 
     def _update_video_settings_availability(self):
         """Resolução/FPS de gravação só existem na API da GoPro - as DSLRs
