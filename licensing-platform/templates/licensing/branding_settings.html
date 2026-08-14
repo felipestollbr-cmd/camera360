@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<p><a class="btn ghost" href="{% url 'licensing:dashboard' %}">&larr; Voltar</a></p>
+<div class="card" style="max-width:420px">
+    <h2>Marca</h2>
+    <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        <label>Nome</label>
+        <input type="text" name="name" value="{{ vendor.name }}" style="width:100%">
+        <label>Cor principal</label>
+        <input type="color" name="primary_color" value="{{ vendor.primary_color }}">
+        <label>Logo</label>
+        {% if vendor.logo %}<p><img src="{{ vendor.logo.url }}" style="height:40px"></p>{% endif %}
+        <input type="file" name="logo" accept="image/*">
+        <button class="btn" type="submit" style="margin-top:16px">Salvar</button>
+    </form>
+</div>
+{% endblock %}

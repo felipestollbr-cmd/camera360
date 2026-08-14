@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block content %}
+<p><a class="btn ghost" href="{% url 'licensing:dashboard' %}">&larr; Voltar</a></p>
+
+<div class="card">
+    <h2>{{ customer.name }}</h2>
+    <p style="color:var(--fg-muted)">{{ customer.email }} {{ customer.phone }}</p>
+</div>
+
+<div class="card">
+    <h2>Emitir licença</h2>
+    <form method="post" action="{% url 'licensing:license-create' customer.id %}" class="inline">
+        {% csrf_token %}
+        <div>
+            <label>Plano</label>
+            <select name="plan_type">
+                {% for value, label in plan_choices %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+            </select>
+        </div>
+        <div><label>Valor cobrado (R$)</label><input type="number" step="0.01" name="amount" required></div>
+        <button class="btn" type="submit">Emitir</button>
+    </form>
+    <p style="color:var(--fg-muted);font-size:13px;margin-top:8px">Venda entra como pendente - marque como paga abaixo pra ativar.</p>
+</div>
+
+<div class="card">
+    <h2>Cobrar automaticamente (Stripe)</h2>
+    <form method="post" action="{% url 'licensing:stripe-checkout-create' customer.id %}" class="inline">
+        {% csrf_token %}
+        <div>
+            <label>Plano</label>
+            <select name="plan_type">
+                {% for value, label in plan_choices %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+            </select>
+        </div>
+        <div><label>Valor cobrado (R$)</label><input type="number" step="0.01" name="amount" required></div>
+        <button class="btn" type="submit">Gerar link de pagamento</button>
+    </form>
+    <p style="color:var(--fg-muted);font-size:13px;margin-top:8px">Gera um link do Stripe pra enviar ao cliente - a licença é ativada sozinha quando o pagamento cair.</p>
+</div>
+
+<div class="card">
+    <h2>Licenças</h2>
+    <table>
+        <tr><th>Chave</th><th>Plano</th><th>Status</th><th>Ativada</th><th>Expira em</th><th></th></tr>
+        {% for license in licenses %}
+        <tr>
+            <td><code>{{ license.license_key }}</code></td>
+            <td>{{ license.get_plan_type_display }}</td>
+            <td><span class="pill {{ license.status }}">{{ license.get_status_display }}</span></td>
+            <td>{% if license.is_activated %}Sim{% else %}Não{% endif %}</td>
+            <td>{% if license.expires_at %}{{ license.expires_at|date:"d/m/Y H:i" }}{% else %}Vitalícia{% endif %}</td>
+            <td>
+                {% if license.status == "active" %}
+                <form method="post" action="{% url 'licensing:license-revoke' license.id %}" style="display:inline">
+                    {% csrf_token %}<button class="btn danger" type="submit">Revogar</button>
+                </form>
+                {% endif %}
+            </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6">Nenhuma licença ainda.</td></tr>
+        {% endfor %}
+    </table>
+</div>
+
+<div class="card">
+    <h2>Vendas</h2>
+    <table>
+        <tr><th>Plano</th><th>Valor</th><th>Método</th><th>Status</th><th></th></tr>
+        {% for sale in sales %}
+        <tr>
+            <td>{{ sale.get_plan_type_display }}</td>
+            <td>R$ {{ sale.amount }}</td>
+            <td>{{ sale.get_method_display }}</td>
+            <td><span class="pill {{ sale.status }}">{{ sale.get_status_display }}</span></td>
+            <td>
+                {% if sale.status == "pending" and sale.method == "manual" %}
+                <form method="post" action="{% url 'licensing:sale-mark-paid' sale.id %}" style="display:inline">
+                    {% csrf_token %}<button class="btn" type="submit">Marcar como paga</button>
+                </form>
+                {% endif %}
+            </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="5">Nenhuma venda ainda.</td></tr>
+        {% endfor %}
+    </table>
+</div>
+{% endblock %}
