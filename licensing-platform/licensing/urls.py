@@ -9,6 +9,7 @@ urlpatterns = [
 
     path("vendors/create/", views.vendor_create, name="vendor-create"),
     path("vendors/<int:vendor_id>/toggle/", views.vendor_toggle, name="vendor-toggle"),
+    path("vendors/<int:vendor_id>/modules/", views.vendor_modules, name="vendor-modules"),
 
     path("customers/create/", views.customer_create, name="customer-create"),
     path("customers/<int:customer_id>/", views.customer_detail, name="customer-detail"),

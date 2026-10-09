@@ -26,6 +26,10 @@ capturas/final/
 events.json
 event_assets/
 
+# Templates de tirinha criados pelo operador e as imagens usadas neles
+strip_templates/
+strip_assets/
+
 # Chave de licenca ativada + id da maquina - identifica essa instalacao
 # especifica, nunca versionar
 license.json

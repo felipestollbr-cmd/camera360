@@ -72,6 +72,22 @@ def probe_dimensions(path):
     return int(width_str), int(height_str)
 
 
+def probe_fps(path, default=30.0):
+    """FPS do vídeo (r_frame_rate do ffprobe, ex.: '30000/1001')."""
+    ffprobe_path = find_ffprobe()
+    if not ffprobe_path:
+        return default
+    cmd = [ffprobe_path, "-v", "error", "-select_streams", "v:0",
+           "-show_entries", "stream=r_frame_rate", "-of", "csv=p=0", path]
+    result = subprocess.run(cmd, capture_output=True)
+    try:
+        num, _, den = result.stdout.decode().strip().partition("/")
+        fps = float(num) / float(den or 1)
+    except (ValueError, ZeroDivisionError):
+        return default
+    return min(max(fps, 1.0), 120.0)
+
+
 def apply_speed_profile(input_path, profile, output_path):
     """
     Corta o vídeo nos trechos definidos pelo perfil (frações 0-1 da duração
@@ -274,12 +290,60 @@ def apply_event_branding(input_path, event, output_path):
         os.rmdir(work_dir)
 
 
-def process_capture(raw_path, output_dir, speed_profile=None, music_path=None, event=None):
+def apply_video_template(input_path, template, output_path):
     """
-    Pipeline completo: velocidade -> formato/marca do evento (se houver) ->
-    música (se configurada) -> retorna o caminho do arquivo final. Chamar
-    de uma thread de worker (o processamento leva alguns segundos, não pode
-    travar a UI do totem).
+    Compõe o vídeo num template de vídeo (strip_templates.py, tipo "video"):
+    escala o vídeo em "cover" pro quadro de vídeo, põe em cima do fundo do
+    template e cobre com as camadas que ficam na frente - tudo num único
+    ffmpeg. As imagens entram com o MESMO fps do vídeo (senão o ffmpeg
+    reamostraria a câmera lenta pro fps padrão da imagem).
+    """
+    import strip_renderer  # import tardio: só quem usa template de vídeo precisa do Pillow aqui
+
+    ffmpeg_path = find_ffmpeg()
+    if not ffmpeg_path:
+        raise VideoProcessingError("ffmpeg não encontrado (bundle do ffmpeg incompleto)")
+    back, front, rect = strip_renderer.render_template_split(template, 1.0)
+    if rect is None:
+        raise VideoProcessingError("O template de vídeo não tem o quadro de vídeo")
+    vx, vy, vw, vh = rect
+    vw, vh = max(2, vw), max(2, vh)
+    fps = probe_fps(input_path)
+
+    work_dir = tempfile.mkdtemp(prefix="camera360_vtemplate_")
+    back_path = os.path.join(work_dir, "back.png")
+    front_path = os.path.join(work_dir, "front.png")
+    try:
+        back.save(back_path)
+        front.save(front_path)
+        graph = (
+            f"[0:v]scale={vw}:{vh}:force_original_aspect_ratio=increase,crop={vw}:{vh}[v];"
+            f"[1:v][v]overlay={vx}:{vy}:shortest=1[b];"
+            f"[b][2:v]overlay=0:0:shortest=1[o];"
+            f"[o]scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p[out]"
+        )
+        _run([
+            ffmpeg_path, "-y", "-loglevel", "error", "-i", input_path,
+            "-framerate", f"{fps:.3f}", "-loop", "1", "-i", back_path,
+            "-framerate", f"{fps:.3f}", "-loop", "1", "-i", front_path,
+            "-filter_complex", graph, "-map", "[out]", "-an",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", output_path,
+        ])
+        return output_path
+    finally:
+        for path in (back_path, front_path):
+            if os.path.exists(path):
+                os.remove(path)
+        os.rmdir(work_dir)
+
+
+def process_capture(raw_path, output_dir, speed_profile=None, music_path=None, event=None,
+                    video_template=None):
+    """
+    Pipeline completo: velocidade -> template de vídeo (se houver) OU
+    formato/marca simples do evento -> música (se configurada) -> retorna o
+    caminho do arquivo final. Chamar de uma thread de worker (o
+    processamento leva alguns segundos, não pode travar a UI do totem).
     """
     profile = speed_profile or DEFAULT_SPEED_PROFILE
     os.makedirs(output_dir, exist_ok=True)
@@ -288,19 +352,25 @@ def process_capture(raw_path, output_dir, speed_profile=None, music_path=None, e
     current_path = os.path.join(output_dir, f"spin_{timestamp}_sped.mp4")
     apply_speed_profile(raw_path, profile, current_path)
 
-    aspect_ratio = (event or {}).get("aspect_ratio")
-    if aspect_ratio and aspect_ratio != "16:9":
-        cropped_path = os.path.join(output_dir, f"spin_{timestamp}_crop.mp4")
-        apply_aspect_ratio(current_path, aspect_ratio, cropped_path)
+    if video_template is not None:
+        templated_path = os.path.join(output_dir, f"spin_{timestamp}_tpl.mp4")
+        apply_video_template(current_path, video_template, templated_path)
         os.remove(current_path)
-        current_path = cropped_path
-
-    if event and (event.get("overlay_text") or event.get("overlay_png_path")):
-        branded_path = os.path.join(output_dir, f"spin_{timestamp}_branded.mp4")
-        apply_event_branding(current_path, event, branded_path)
-        if os.path.exists(current_path) and current_path != branded_path:
+        current_path = templated_path
+    else:
+        aspect_ratio = (event or {}).get("aspect_ratio")
+        if aspect_ratio and aspect_ratio != "16:9":
+            cropped_path = os.path.join(output_dir, f"spin_{timestamp}_crop.mp4")
+            apply_aspect_ratio(current_path, aspect_ratio, cropped_path)
             os.remove(current_path)
-        current_path = branded_path
+            current_path = cropped_path
+
+        if event and (event.get("overlay_text") or event.get("overlay_png_path")):
+            branded_path = os.path.join(output_dir, f"spin_{timestamp}_branded.mp4")
+            apply_event_branding(current_path, event, branded_path)
+            if os.path.exists(current_path) and current_path != branded_path:
+                os.remove(current_path)
+            current_path = branded_path
 
     final_path = os.path.join(output_dir, f"spin_{timestamp}.mp4")
     if not music_path or not os.path.isfile(music_path):

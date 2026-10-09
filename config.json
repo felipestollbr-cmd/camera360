@@ -5,6 +5,10 @@
     "music_path": "",
     "license_api_url": "http://127.0.0.1:8000",
     "license_check_interval_minutes": 30,
+    "brand_name": "Camera360",
+    "splash_image": "",
+    "splash_min_seconds": 2.5,
+    "strip_pause_seconds": 2,
     "speed_profile": [
         {"start_pct": 0.0, "end_pct": 0.35, "speed": 1.0},
         {"start_pct": 0.35, "end_pct": 0.65, "speed": 0.35},

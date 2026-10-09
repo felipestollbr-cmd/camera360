@@ -18,6 +18,8 @@ def _license_payload(license_, message, valid=None):
     return {
         "valid": license_.is_valid() if valid is None else valid,
         "plan_type": license_.plan_type,
+        "module": license_.modules,
+        "modules": license_.features,
         "status": license_.status,
         "activated": license_.is_activated,
         "expires_at": license_.expires_at.isoformat() if license_.expires_at else None,

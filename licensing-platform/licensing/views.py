@@ -62,6 +62,7 @@ def dashboard(request):
         "licenses": licenses,
         "sales": sales,
         "plan_choices": PLAN_CHOICES,
+        "module_choices": vendor.module_choices(),
     })
 
 
@@ -78,12 +79,35 @@ def vendor_create(request):
             messages.error(request, "Nome, usuário e senha são obrigatórios.")
             return redirect("licensing:dashboard")
 
-        vendor = Vendor.objects.create(name=name, primary_color=primary_color, created_by=request.user)
+        # "modules_form" marca que o form de módulos veio na requisição (checkbox
+        # desmarcado não é enviado); sem ele, assume os dois módulos liberados.
+        if request.POST.get("modules_form"):
+            sells_360 = bool(request.POST.get("sells_360"))
+            sells_photobooth = bool(request.POST.get("sells_photobooth"))
+        else:
+            sells_360 = sells_photobooth = True
+
+        vendor = Vendor.objects.create(
+            name=name, primary_color=primary_color, created_by=request.user,
+            sells_360=sells_360, sells_photobooth=sells_photobooth)
         if request.FILES.get("logo"):
             vendor.logo = request.FILES["logo"]
             vendor.save()
         User.objects.create_user(username=username, password=password, vendor=vendor)
         messages.success(request, f"Vendedor '{name}' criado com o login '{username}'.")
+    return redirect("licensing:dashboard")
+
+
+@superadmin_required
+def vendor_modules(request, vendor_id):
+    """Define quais módulos o vendedor pode licenciar. Só vale pra novas
+    emissões: licenças já vendidas continuam como foram vendidas."""
+    vendor = get_object_or_404(Vendor, id=vendor_id)
+    if request.method == "POST":
+        vendor.sells_360 = bool(request.POST.get("sells_360"))
+        vendor.sells_photobooth = bool(request.POST.get("sells_photobooth"))
+        vendor.save(update_fields=["sells_360", "sells_photobooth"])
+        messages.success(request, f"Módulos de '{vendor.name}' atualizados.")
     return redirect("licensing:dashboard")
 
 
@@ -122,18 +146,33 @@ def customer_detail(request, customer_id):
     return render(request, "licensing/customer_detail.html", {
         "customer": customer, "licenses": licenses, "sales": sales,
         "plan_choices": PLAN_CHOICES,
+        "module_choices": request.user.vendor.module_choices(),
     })
 
 
 # --- vendedor: licenças/vendas ----------------------------------------------
 
+def _module_or_error(request, customer):
+    """Módulo pedido no POST, validado contra o que o vendedor comprou do
+    super admin. Se não pode emitir, avisa e devolve None."""
+    module = request.user.vendor.resolve_module(request.POST.get("modules", ""))
+    if module is None:
+        messages.error(request, "Você não tem permissão pra licenciar esse módulo. "
+                                "Fale com o administrador pra liberar.")
+    return module
+
+
 @vendor_required
 def license_create(request, customer_id):
     customer = get_object_or_404(Customer, id=customer_id, vendor=request.user.vendor)
     if request.method == "POST":
+        modules = _module_or_error(request, customer)
+        if modules is None:
+            return redirect("licensing:customer-detail", customer_id=customer.id)
         plan_type = request.POST.get("plan_type")
         amount = request.POST.get("amount") or "0"
-        license_ = License.objects.create(vendor=request.user.vendor, customer=customer, plan_type=plan_type)
+        license_ = License.objects.create(
+            vendor=request.user.vendor, customer=customer, plan_type=plan_type, modules=modules)
         Sale.objects.create(
             vendor=request.user.vendor, customer=customer, license=license_,
             plan_type=plan_type, amount=amount, method="manual", status="pending",
@@ -192,10 +231,15 @@ def stripe_checkout_create(request, customer_id):
         messages.error(request, "Stripe não configurado nesta instalação (falta STRIPE_SECRET_KEY).")
         return redirect("licensing:customer-detail", customer_id=customer.id)
 
+    modules = _module_or_error(request, customer)
+    if modules is None:
+        return redirect("licensing:customer-detail", customer_id=customer.id)
+
     plan_type = request.POST.get("plan_type")
     amount = request.POST.get("amount") or "0"
 
-    license_ = License.objects.create(vendor=request.user.vendor, customer=customer, plan_type=plan_type)
+    license_ = License.objects.create(
+        vendor=request.user.vendor, customer=customer, plan_type=plan_type, modules=modules)
     sale = Sale.objects.create(
         vendor=request.user.vendor, customer=customer, license=license_,
         plan_type=plan_type, amount=amount, method="stripe", status="pending",

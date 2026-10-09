@@ -1,6 +1,14 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
+    <p style="color:var(--fg-muted);margin:0">Você pode licenciar:
+        {% if vendor.sells_360 %}<strong style="color:var(--fg-text)">Giro 360°</strong>{% endif %}
+        {% if vendor.sells_360 and vendor.sells_photobooth %}&middot;{% endif %}
+        {% if vendor.sells_photobooth %}<strong style="color:var(--fg-text)">Photobooth</strong>{% endif %}
+        {% if not vendor.sells_360 and not vendor.sells_photobooth %}nenhum módulo ainda (fale com o administrador){% endif %}</p>
+</div>
+
+<div class="card">
     <h2>Criar cliente</h2>
     <form method="post" action="{% url 'licensing:customer-create' %}" class="inline">
         {% csrf_token %}

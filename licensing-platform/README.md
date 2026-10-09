@@ -7,6 +7,19 @@ vitalícia) e vendas (manuais ou via Stripe Checkout). O Camera360 desktop
 consulta essa plataforma pra validar a licença antes de rodar
 (`license_client.py` no projeto `camera_360/`).
 
+## Módulos (Giro 360° / Photobooth)
+
+O Camera360 é 2 em 1 e cada licença libera **Giro 360°**, **Photobooth** ou
+**os dois** (`License.modules`: `360` / `photobooth` / `both`). O super admin
+define, por vendedor, o que ele pode licenciar (checkboxes ao criar o
+vendedor e na lista de vendedores - o vendedor só vende o que comprou do
+super admin); ao emitir cada licença, o vendedor escolhe entre os módulos
+liberados pra ele, e isso é validado no servidor. Trocar os módulos de um
+vendedor só vale pras novas emissões: licenças já vendidas não mudam. A API
+(`/api/v1/license/activate` e `/validate`) devolve `modules`
+(`["video360"]`, `["photobooth"]` ou os dois), que o app usa pra mostrar só
+o que está licenciado. Licenças antigas (sem módulo) viram `both`.
+
 ## Rodar localmente (dev, sem Docker)
 
 ```

@@ -7,10 +7,22 @@
     <p style="color:var(--fg-muted)">{{ customer.email }} {{ customer.phone }}</p>
 </div>
 
+{% if not module_choices %}
+<div class="card">
+    <h2>Emitir licença</h2>
+    <p style="color:var(--fg-muted)">Você ainda não tem nenhum módulo liberado pra licenciar. Fale com o administrador.</p>
+</div>
+{% else %}
 <div class="card">
     <h2>Emitir licença</h2>
     <form method="post" action="{% url 'licensing:license-create' customer.id %}" class="inline">
         {% csrf_token %}
+        <div>
+            <label>Módulos</label>
+            <select name="modules">
+                {% for value, label in module_choices %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+            </select>
+        </div>
         <div>
             <label>Plano</label>
             <select name="plan_type">
@@ -28,6 +40,12 @@
     <form method="post" action="{% url 'licensing:stripe-checkout-create' customer.id %}" class="inline">
         {% csrf_token %}
         <div>
+            <label>Módulos</label>
+            <select name="modules">
+                {% for value, label in module_choices %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+            </select>
+        </div>
+        <div>
             <label>Plano</label>
             <select name="plan_type">
                 {% for value, label in plan_choices %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
@@ -38,14 +56,16 @@
     </form>
     <p style="color:var(--fg-muted);font-size:13px;margin-top:8px">Gera um link do Stripe pra enviar ao cliente - a licença é ativada sozinha quando o pagamento cair.</p>
 </div>
+{% endif %}
 
 <div class="card">
     <h2>Licenças</h2>
     <table>
-        <tr><th>Chave</th><th>Plano</th><th>Status</th><th>Ativada</th><th>Expira em</th><th></th></tr>
+        <tr><th>Chave</th><th>Módulos</th><th>Plano</th><th>Status</th><th>Ativada</th><th>Expira em</th><th></th></tr>
         {% for license in licenses %}
         <tr>
             <td><code>{{ license.license_key }}</code></td>
+            <td>{{ license.get_modules_display }}</td>
             <td>{{ license.get_plan_type_display }}</td>
             <td><span class="pill {{ license.status }}">{{ license.get_status_display }}</span></td>
             <td>{% if license.is_activated %}Sim{% else %}Não{% endif %}</td>
@@ -59,7 +79,7 @@
             </td>
         </tr>
         {% empty %}
-        <tr><td colspan="6">Nenhuma licença ainda.</td></tr>
+        <tr><td colspan="7">Nenhuma licença ainda.</td></tr>
         {% endfor %}
     </table>
 </div>

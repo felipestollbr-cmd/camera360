@@ -14,6 +14,14 @@
         <div><label>Senha</label><input type="password" name="password" required></div>
         <div><label>Cor principal</label><input type="color" name="primary_color" value="#00e0a0"></div>
         <div><label>Logo (opcional)</label><input type="file" name="logo" accept="image/*"></div>
+        <div>
+            <label>Módulos que ele pode licenciar</label>
+            <input type="hidden" name="modules_form" value="1">
+            <label style="display:inline-flex;gap:6px;align-items:center;color:var(--fg-text)">
+                <input type="checkbox" name="sells_360" checked style="width:auto"> Giro 360°</label>
+            <label style="display:inline-flex;gap:6px;align-items:center;color:var(--fg-text)">
+                <input type="checkbox" name="sells_photobooth" checked style="width:auto"> Photobooth</label>
+        </div>
         <button class="btn" type="submit">Criar</button>
     </form>
 </div>
@@ -21,12 +29,22 @@
 <div class="card">
     <h2>Vendedores</h2>
     <table>
-        <tr><th>Nome</th><th>Status</th><th>Criado em</th><th></th></tr>
+        <tr><th>Nome</th><th>Status</th><th>Módulos que pode licenciar</th><th>Criado em</th><th></th></tr>
         {% for vendor in vendors %}
         <tr>
             <td>{{ vendor.name }}</td>
             <td><span class="pill {% if vendor.is_active %}active{% else %}revoked{% endif %}">
                 {% if vendor.is_active %}Ativo{% else %}Desativado{% endif %}</span></td>
+            <td>
+                <form method="post" action="{% url 'licensing:vendor-modules' vendor.id %}" style="display:inline">
+                    {% csrf_token %}
+                    <label style="display:inline-flex;gap:4px;align-items:center;color:var(--fg-text)">
+                        <input type="checkbox" name="sells_360" {% if vendor.sells_360 %}checked{% endif %} style="width:auto"> 360°</label>
+                    <label style="display:inline-flex;gap:4px;align-items:center;color:var(--fg-text)">
+                        <input type="checkbox" name="sells_photobooth" {% if vendor.sells_photobooth %}checked{% endif %} style="width:auto"> Photobooth</label>
+                    <button class="btn ghost" type="submit">Salvar</button>
+                </form>
+            </td>
             <td>{{ vendor.created_at|date:"d/m/Y" }}</td>
             <td>
                 <form method="post" action="{% url 'licensing:vendor-toggle' vendor.id %}" style="display:inline">
@@ -37,7 +55,7 @@
             </td>
         </tr>
         {% empty %}
-        <tr><td colspan="4">Nenhum vendedor ainda.</td></tr>
+        <tr><td colspan="5">Nenhum vendedor ainda.</td></tr>
         {% endfor %}
     </table>
 </div>

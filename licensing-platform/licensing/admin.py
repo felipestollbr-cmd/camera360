@@ -5,7 +5,7 @@ from .models import Customer, License, Sale, Vendor
 
 @admin.register(Vendor)
 class VendorAdmin(admin.ModelAdmin):
-    list_display = ("name", "slug", "is_active", "created_at")
+    list_display = ("name", "slug", "is_active", "sells_360", "sells_photobooth", "created_at")
     prepopulated_fields = {"slug": ("name",)}
 
 
@@ -17,8 +17,9 @@ class CustomerAdmin(admin.ModelAdmin):
 
 @admin.register(License)
 class LicenseAdmin(admin.ModelAdmin):
-    list_display = ("license_key", "customer", "vendor", "plan_type", "status", "expires_at", "hardware_id")
-    list_filter = ("vendor", "plan_type", "status")
+    list_display = ("license_key", "customer", "vendor", "plan_type", "modules", "status", "expires_at",
+                    "hardware_id")
+    list_filter = ("vendor", "plan_type", "modules", "status")
     search_fields = ("license_key", "customer__name", "hardware_id")
 
 

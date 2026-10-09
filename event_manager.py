@@ -44,7 +44,8 @@ def get_active_event(data):
     return None
 
 
-def create_event(data, name, aspect_ratio="16:9", overlay_text="", overlay_png_source=None):
+def create_event(data, name, aspect_ratio="16:9", overlay_text="", overlay_png_source=None,
+                 strip_template_id="", video_template_id=""):
     """Cria um evento novo. Se overlay_png_source for informado, copia o
     arquivo pra event_assets/ (assim o evento não depende do arquivo
     original continuar no mesmo lugar no disco)."""
@@ -62,6 +63,8 @@ def create_event(data, name, aspect_ratio="16:9", overlay_text="", overlay_png_s
         "aspect_ratio": aspect_ratio if aspect_ratio in ASPECT_RATIO_CHOICES else "16:9",
         "overlay_text": overlay_text,
         "overlay_png_path": overlay_png_path,
+        "strip_template_id": strip_template_id or "",
+        "video_template_id": video_template_id or "",
     }
     data["events"].append(event)
     if not data.get("active_event_id"):

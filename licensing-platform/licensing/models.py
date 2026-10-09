@@ -29,6 +29,20 @@ PLAN_CHOICES = [
     ("lifetime", "Vitalícia"),
 ]
 
+# O Camera360 é 2 em 1: a licença libera o Giro 360°, o Photobooth ou os dois.
+MODULE_CHOICES = [
+    ("360", "Giro 360°"),
+    ("photobooth", "Photobooth"),
+    ("both", "Giro 360° + Photobooth"),
+]
+
+# O que o app desktop recebe na API (ids de módulo do lado do app).
+MODULE_FEATURES = {
+    "360": ["video360"],
+    "photobooth": ["photobooth"],
+    "both": ["video360", "photobooth"],
+}
+
 
 class Vendor(models.Model):
     """Um revendedor com marca própria (logo/cor/nome) - vende e controla
@@ -38,6 +52,10 @@ class Vendor(models.Model):
     logo = models.ImageField(upload_to="vendor_logos/", null=True, blank=True)
     primary_color = models.CharField(max_length=7, default="#00e0a0")
     is_active = models.BooleanField(default=True)
+    # Módulos que esse vendedor comprou do super admin - e portanto os únicos
+    # que ele pode licenciar pros clientes finais dele.
+    sells_360 = models.BooleanField(default=True)
+    sells_photobooth = models.BooleanField(default=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True,
         on_delete=models.SET_NULL, related_name="vendors_created")
@@ -56,6 +74,30 @@ class Vendor(models.Model):
 
     def __str__(self):
         return self.name
+
+    def allowed_modules(self):
+        """Valores de License.modules que esse vendedor pode emitir."""
+        if self.sells_360 and self.sells_photobooth:
+            return ["360", "photobooth", "both"]
+        if self.sells_360:
+            return ["360"]
+        if self.sells_photobooth:
+            return ["photobooth"]
+        return []
+
+    def module_choices(self):
+        allowed = self.allowed_modules()
+        return [(value, label) for value, label in MODULE_CHOICES if value in allowed]
+
+    def resolve_module(self, requested):
+        """Módulo a usar numa licença nova: o pedido, se permitido; sem
+        pedido, 'both' (ou o único permitido). None se não pode emitir."""
+        allowed = self.allowed_modules()
+        if not allowed:
+            return None
+        if requested:
+            return requested if requested in allowed else None
+        return "both" if "both" in allowed else allowed[0]
 
 
 class Customer(models.Model):
@@ -78,6 +120,8 @@ class License(models.Model):
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name="licenses")
     license_key = models.CharField(max_length=32, unique=True, default=generate_license_key)
     plan_type = models.CharField(max_length=10, choices=PLAN_CHOICES)
+    # default "both": licenças emitidas antes dos módulos existirem liberam tudo
+    modules = models.CharField(max_length=10, choices=MODULE_CHOICES, default="both")
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="active")
 
     hardware_id = models.CharField(max_length=128, blank=True)
@@ -89,6 +133,11 @@ class License(models.Model):
 
     def __str__(self):
         return f"{self.license_key} ({self.customer.name})"
+
+    @property
+    def features(self):
+        """Módulos liberados, como o app desktop os conhece."""
+        return list(MODULE_FEATURES.get(self.modules, MODULE_FEATURES["both"]))
 
     @property
     def is_activated(self):

@@ -19,6 +19,10 @@ DEFAULT_CONFIG = {
     "music_path": "",
     "license_api_url": "http://127.0.0.1:8000",
     "license_check_interval_minutes": 30,
+    "brand_name": "Camera360",
+    "splash_image": "",
+    "splash_min_seconds": 2.5,
+    "strip_pause_seconds": 2,
     "speed_profile": DEFAULT_SPEED_PROFILE,
     "kiosk": {
         "countdown_seconds": 3,
