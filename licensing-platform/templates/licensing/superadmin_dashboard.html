@@ -2,11 +2,12 @@
 {% block content %}
 <div class="card">
     <h2>Visão geral</h2>
-    <p>{{ vendors|length }} vendedor(es) - {{ total_customers }} cliente(s) - {{ total_licenses }} licença(s)</p>
+    <p>{{ vendors|length }} cliente(s) vendedor(es) &middot; {{ total_customers }} cliente(s) final(is) &middot; {{ total_licenses }} licença(s)</p>
 </div>
 
 <div class="card">
-    <h2>Criar vendedor</h2>
+    <h2>Criar cliente (vendedor)</h2>
+    <p class="muted">Cada cliente vendedor ganha um login próprio, com a marca dele, e cadastra os próprios clientes finais.</p>
     <form method="post" action="{% url 'licensing:vendor-create' %}" enctype="multipart/form-data" class="inline">
         {% csrf_token %}
         <div><label>Nome da marca</label><input type="text" name="name" required></div>
@@ -17,37 +18,31 @@
         <div>
             <label>Módulos que ele pode licenciar</label>
             <input type="hidden" name="modules_form" value="1">
-            <label style="display:inline-flex;gap:6px;align-items:center;color:var(--fg-text)">
-                <input type="checkbox" name="sells_360" checked style="width:auto"> Giro 360°</label>
-            <label style="display:inline-flex;gap:6px;align-items:center;color:var(--fg-text)">
-                <input type="checkbox" name="sells_photobooth" checked style="width:auto"> Photobooth</label>
+            <label class="check"><input type="checkbox" name="sells_360" checked> Giro 360°</label>
+            <label class="check"><input type="checkbox" name="sells_photobooth" checked> Photobooth</label>
         </div>
         <button class="btn" type="submit">Criar</button>
     </form>
 </div>
 
 <div class="card">
-    <h2>Vendedores</h2>
+    <h2>Clientes (vendedores)</h2>
     <table>
-        <tr><th>Nome</th><th>Status</th><th>Módulos que pode licenciar</th><th>Criado em</th><th></th></tr>
+        <tr><th>Nome</th><th>Status</th><th>Módulos</th><th>Clientes finais</th><th>Criado em</th><th></th></tr>
         {% for vendor in vendors %}
         <tr>
-            <td>{{ vendor.name }}</td>
+            <td><a href="{% url 'licensing:vendor-detail' vendor.id %}">{{ vendor.name }}</a></td>
             <td><span class="pill {% if vendor.is_active %}active{% else %}revoked{% endif %}">
                 {% if vendor.is_active %}Ativo{% else %}Desativado{% endif %}</span></td>
             <td>
-                <form method="post" action="{% url 'licensing:vendor-modules' vendor.id %}" style="display:inline">
-                    {% csrf_token %}
-                    <label style="display:inline-flex;gap:4px;align-items:center;color:var(--fg-text)">
-                        <input type="checkbox" name="sells_360" {% if vendor.sells_360 %}checked{% endif %} style="width:auto"> 360°</label>
-                    <label style="display:inline-flex;gap:4px;align-items:center;color:var(--fg-text)">
-                        <input type="checkbox" name="sells_photobooth" {% if vendor.sells_photobooth %}checked{% endif %} style="width:auto"> Photobooth</label>
-                    <button class="btn ghost" type="submit">Salvar</button>
-                </form>
+                {% if vendor.sells_360 %}360°{% endif %}{% if vendor.sells_360 and vendor.sells_photobooth %} &middot; {% endif %}{% if vendor.sells_photobooth %}Photobooth{% endif %}
+                {% if not vendor.sells_360 and not vendor.sells_photobooth %}<span class="muted">nenhum</span>{% endif %}
             </td>
+            <td>{{ vendor.customers.count }}</td>
             <td>{{ vendor.created_at|date:"d/m/Y" }}</td>
             <td>
-                <form method="post" action="{% url 'licensing:vendor-toggle' vendor.id %}" style="display:inline">
+                <a class="btn ghost" href="{% url 'licensing:vendor-detail' vendor.id %}">Gerenciar</a>
+                <form method="post" action="{% url 'licensing:vendor-toggle' vendor.id %}" class="inline">
                     {% csrf_token %}
                     <button class="btn ghost" type="submit">
                         {% if vendor.is_active %}Desativar{% else %}Reativar{% endif %}</button>
@@ -55,7 +50,7 @@
             </td>
         </tr>
         {% empty %}
-        <tr><td colspan="5">Nenhum vendedor ainda.</td></tr>
+        <tr><td colspan="6">Nenhum cliente vendedor ainda.</td></tr>
         {% endfor %}
     </table>
 </div>

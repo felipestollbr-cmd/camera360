@@ -5,6 +5,26 @@
 <div class="card">
     <h2>{{ customer.name }}</h2>
     <p style="color:var(--fg-muted)">{{ customer.email }} {{ customer.phone }}</p>
+    <details>
+        <summary class="muted" style="cursor:pointer">Editar dados do cliente</summary>
+        <form method="post" action="{% url 'licensing:customer-update' customer.id %}">
+            {% csrf_token %}
+            <div class="row">
+                <div><label>Nome</label><input type="text" name="name" value="{{ customer.name }}" required></div>
+                <div><label>E-mail</label><input type="email" name="email" value="{{ customer.email }}"></div>
+                <div><label>Telefone</label><input type="text" name="phone" value="{{ customer.phone }}"></div>
+            </div>
+            <label>Observações</label>
+            <textarea name="notes" rows="2">{{ customer.notes }}</textarea>
+            <p><button class="btn" type="submit">Salvar</button></p>
+        </form>
+        <form method="post" action="{% url 'licensing:customer-delete' customer.id %}"
+              onsubmit="return confirm('Excluir este cliente?');">
+            {% csrf_token %}
+            <button class="btn danger" type="submit">Excluir cliente</button>
+            <span class="muted">(só é possível se ele não tiver licenças/vendas)</span>
+        </form>
+    </details>
 </div>
 
 {% if not module_choices %}

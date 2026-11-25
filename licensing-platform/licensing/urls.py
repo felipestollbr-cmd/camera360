@@ -8,11 +8,18 @@ urlpatterns = [
     path("", views.dashboard, name="dashboard"),
 
     path("vendors/create/", views.vendor_create, name="vendor-create"),
+    path("vendors/<int:vendor_id>/", views.vendor_detail, name="vendor-detail"),
+    path("vendors/<int:vendor_id>/update/", views.vendor_update, name="vendor-update"),
+    path("vendors/<int:vendor_id>/logins/create/", views.vendor_add_login, name="vendor-login-create"),
+    path("vendors/<int:vendor_id>/logins/<int:user_id>/password/", views.vendor_set_password,
+         name="vendor-login-password"),
     path("vendors/<int:vendor_id>/toggle/", views.vendor_toggle, name="vendor-toggle"),
     path("vendors/<int:vendor_id>/modules/", views.vendor_modules, name="vendor-modules"),
 
     path("customers/create/", views.customer_create, name="customer-create"),
     path("customers/<int:customer_id>/", views.customer_detail, name="customer-detail"),
+    path("customers/<int:customer_id>/update/", views.customer_update, name="customer-update"),
+    path("customers/<int:customer_id>/delete/", views.customer_delete, name="customer-delete"),
     path("customers/<int:customer_id>/licenses/create/", views.license_create, name="license-create"),
     path("customers/<int:customer_id>/stripe-checkout/", views.stripe_checkout_create, name="stripe-checkout-create"),
 

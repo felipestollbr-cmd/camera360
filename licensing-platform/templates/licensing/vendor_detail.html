@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block content %}
+<p><a class="btn ghost" href="{% url 'licensing:dashboard' %}">&larr; Voltar</a></p>
+
+<div class="card">
+    <h2>{{ vendor.name }}
+        <span class="pill {% if vendor.is_active %}active{% else %}revoked{% endif %}">
+            {% if vendor.is_active %}Ativo{% else %}Desativado{% endif %}</span></h2>
+    <p class="muted">Cliente vendedor desde {{ vendor.created_at|date:"d/m/Y" }} &middot;
+        {{ customers|length }} cliente(s) final(is) &middot; {{ license_count }} licença(s)</p>
+    <form method="post" action="{% url 'licensing:vendor-toggle' vendor.id %}" class="inline">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="detail">
+        <button class="btn {% if vendor.is_active %}danger{% else %}ghost{% endif %}" type="submit">
+            {% if vendor.is_active %}Desativar acesso{% else %}Reativar acesso{% endif %}</button>
+    </form>
+</div>
+
+<div class="card">
+    <h2>Dados e módulos</h2>
+    <form method="post" action="{% url 'licensing:vendor-update' vendor.id %}" enctype="multipart/form-data">
+        {% csrf_token %}
+        <div class="row">
+            <div><label>Nome da marca</label><input type="text" name="name" value="{{ vendor.name }}" required></div>
+            <div><label>Cor principal</label><input type="color" name="primary_color" value="{{ vendor.primary_color }}"></div>
+            <div><label>Trocar logo</label><input type="file" name="logo" accept="image/*"></div>
+        </div>
+        <label>Módulos que ele pode licenciar</label>
+        <label class="check"><input type="checkbox" name="sells_360" {% if vendor.sells_360 %}checked{% endif %}> Giro 360°</label>
+        <label class="check"><input type="checkbox" name="sells_photobooth" {% if vendor.sells_photobooth %}checked{% endif %}> Photobooth</label>
+        <p class="muted">Só vale para licenças novas; as já vendidas não mudam.</p>
+        <button class="btn" type="submit">Salvar</button>
+    </form>
+</div>
+
+<div class="card">
+    <h2>Logins de acesso</h2>
+    <table>
+        <tr><th>Usuário</th><th>Redefinir senha</th></tr>
+        {% for login in logins %}
+        <tr>
+            <td>{{ login.username }}</td>
+            <td>
+                <form method="post" action="{% url 'licensing:vendor-login-password' vendor.id login.id %}" class="inline-row">
+                    {% csrf_token %}
+                    <input type="password" name="password" placeholder="Nova senha" required minlength="4">
+                    <button class="btn ghost" type="submit">Redefinir</button>
+                </form>
+            </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="2">Nenhum login ainda.</td></tr>
+        {% endfor %}
+    </table>
+    <h2 style="margin-top:20px">Adicionar outro login</h2>
+    <form method="post" action="{% url 'licensing:vendor-login-create' vendor.id %}" class="inline-row">
+        {% csrf_token %}
+        <input type="text" name="username" placeholder="Usuário" required>
+        <input type="password" name="password" placeholder="Senha" required minlength="4">
+        <button class="btn" type="submit">Adicionar</button>
+    </form>
+</div>
+
+<div class="card">
+    <h2>Clientes finais deste vendedor</h2>
+    <table>
+        <tr><th>Nome</th><th>Contato</th><th>Licenças</th><th>Criado em</th></tr>
+        {% for customer in customers %}
+        <tr>
+            <td>{{ customer.name }}</td>
+            <td>{{ customer.email }} {{ customer.phone }}</td>
+            <td>{{ customer.license_count }}</td>
+            <td>{{ customer.created_at|date:"d/m/Y" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="4">Nenhum cliente final ainda.</td></tr>
+        {% endfor %}
+    </table>
+</div>
+{% endblock %}

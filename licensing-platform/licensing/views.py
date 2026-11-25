@@ -1,3 +1,4 @@
+import re
 from functools import wraps
 
 import stripe
@@ -5,6 +6,8 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth import get_user_model
+from django.db import transaction
+from django.db.models import Count
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -87,15 +90,86 @@ def vendor_create(request):
         else:
             sells_360 = sells_photobooth = True
 
-        vendor = Vendor.objects.create(
-            name=name, primary_color=primary_color, created_by=request.user,
-            sells_360=sells_360, sells_photobooth=sells_photobooth)
+        if User.objects.filter(username__iexact=username).exists():
+            messages.error(request, f"O usuário '{username}' já existe - escolha outro.")
+            return redirect("licensing:dashboard")
+
+        with transaction.atomic():
+            vendor = Vendor.objects.create(
+                name=name, primary_color=primary_color, created_by=request.user,
+                sells_360=sells_360, sells_photobooth=sells_photobooth)
+            if request.FILES.get("logo"):
+                vendor.logo = request.FILES["logo"]
+                vendor.save()
+            User.objects.create_user(username=username, password=password, vendor=vendor)
+        messages.success(request, f"Cliente '{name}' criado com o login '{username}'.")
+        return redirect("licensing:vendor-detail", vendor_id=vendor.id)
+    return redirect("licensing:dashboard")
+
+
+@superadmin_required
+def vendor_detail(request, vendor_id):
+    vendor = get_object_or_404(Vendor, id=vendor_id)
+    return render(request, "licensing/vendor_detail.html", {
+        "vendor": vendor,
+        "logins": vendor.team_members.order_by("username"),
+        "customers": vendor.customers.annotate(license_count=Count("licenses")).order_by("-created_at"),
+        "license_count": vendor.licenses.count(),
+    })
+
+
+@superadmin_required
+def vendor_update(request, vendor_id):
+    """Edita nome, cor, logo e módulos do cliente vendedor."""
+    vendor = get_object_or_404(Vendor, id=vendor_id)
+    if request.method == "POST":
+        name = request.POST.get("name", "").strip()
+        if not name:
+            messages.error(request, "O nome não pode ficar vazio.")
+            return redirect("licensing:vendor-detail", vendor_id=vendor.id)
+        vendor.name = name
+        color = request.POST.get("primary_color", "").strip()
+        if re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+            vendor.primary_color = color
         if request.FILES.get("logo"):
             vendor.logo = request.FILES["logo"]
-            vendor.save()
-        User.objects.create_user(username=username, password=password, vendor=vendor)
-        messages.success(request, f"Vendedor '{name}' criado com o login '{username}'.")
-    return redirect("licensing:dashboard")
+        vendor.sells_360 = bool(request.POST.get("sells_360"))
+        vendor.sells_photobooth = bool(request.POST.get("sells_photobooth"))
+        vendor.save()
+        messages.success(request, f"Cliente '{vendor.name}' atualizado.")
+    return redirect("licensing:vendor-detail", vendor_id=vendor.id)
+
+
+@superadmin_required
+def vendor_add_login(request, vendor_id):
+    """Cria outro login (usuário/senha) pro mesmo cliente vendedor."""
+    vendor = get_object_or_404(Vendor, id=vendor_id)
+    if request.method == "POST":
+        username = request.POST.get("username", "").strip()
+        password = request.POST.get("password", "").strip()
+        if not (username and password):
+            messages.error(request, "Informe usuário e senha.")
+        elif User.objects.filter(username__iexact=username).exists():
+            messages.error(request, f"O usuário '{username}' já existe - escolha outro.")
+        else:
+            User.objects.create_user(username=username, password=password, vendor=vendor)
+            messages.success(request, f"Login '{username}' criado.")
+    return redirect("licensing:vendor-detail", vendor_id=vendor.id)
+
+
+@superadmin_required
+def vendor_set_password(request, vendor_id, user_id):
+    vendor = get_object_or_404(Vendor, id=vendor_id)
+    login_user = get_object_or_404(User, id=user_id, vendor=vendor)
+    if request.method == "POST":
+        password = request.POST.get("password", "").strip()
+        if len(password) < 4:
+            messages.error(request, "A senha precisa ter pelo menos 4 caracteres.")
+        else:
+            login_user.set_password(password)
+            login_user.save(update_fields=["password"])
+            messages.success(request, f"Senha de '{login_user.username}' redefinida.")
+    return redirect("licensing:vendor-detail", vendor_id=vendor.id)
 
 
 @superadmin_required
@@ -116,6 +190,8 @@ def vendor_toggle(request, vendor_id):
     vendor = get_object_or_404(Vendor, id=vendor_id)
     vendor.is_active = not vendor.is_active
     vendor.save()
+    if request.POST.get("next") == "detail":
+        return redirect("licensing:vendor-detail", vendor_id=vendor.id)
     return redirect("licensing:dashboard")
 
 
@@ -128,13 +204,46 @@ def customer_create(request):
         if not name:
             messages.error(request, "Dê um nome pro cliente.")
             return redirect("licensing:dashboard")
-        Customer.objects.create(
+        customer = Customer.objects.create(
             vendor=request.user.vendor, name=name,
             email=request.POST.get("email", "").strip(),
             phone=request.POST.get("phone", "").strip(),
             notes=request.POST.get("notes", "").strip(),
         )
-        messages.success(request, f"Cliente '{name}' criado.")
+        messages.success(request, f"Cliente '{name}' criado - agora é só emitir a licença.")
+        return redirect("licensing:customer-detail", customer_id=customer.id)
+    return redirect("licensing:dashboard")
+
+
+@vendor_required
+def customer_update(request, customer_id):
+    customer = get_object_or_404(Customer, id=customer_id, vendor=request.user.vendor)
+    if request.method == "POST":
+        name = request.POST.get("name", "").strip()
+        if not name:
+            messages.error(request, "O nome não pode ficar vazio.")
+        else:
+            customer.name = name
+            customer.email = request.POST.get("email", "").strip()
+            customer.phone = request.POST.get("phone", "").strip()
+            customer.notes = request.POST.get("notes", "").strip()
+            customer.save()
+            messages.success(request, "Cliente atualizado.")
+    return redirect("licensing:customer-detail", customer_id=customer.id)
+
+
+@vendor_required
+def customer_delete(request, customer_id):
+    """Só exclui cliente sem licenças/vendas (são histórico financeiro)."""
+    customer = get_object_or_404(Customer, id=customer_id, vendor=request.user.vendor)
+    if request.method == "POST":
+        if customer.licenses.exists() or customer.sales.exists():
+            messages.error(request, "Esse cliente já tem licenças/vendas e não pode ser excluído "
+                                    "(revogue as licenças, se for o caso).")
+            return redirect("licensing:customer-detail", customer_id=customer.id)
+        name = customer.name
+        customer.delete()
+        messages.success(request, f"Cliente '{name}' excluído.")
     return redirect("licensing:dashboard")
 
 

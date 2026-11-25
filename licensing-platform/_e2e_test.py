@@ -27,7 +27,7 @@ def login(session, username, password):
 admin_session = requests.Session()
 login(admin_session, "admin", "admin12345")
 csrf, resp = get_csrf(admin_session, f"{BASE}/")
-assert "Criar vendedor" in resp.text, "dashboard do super admin não carregou direito"
+assert "Criar cliente (vendedor)" in resp.text, "dashboard do super admin não carregou direito"
 
 VENDOR_NAME = f"Fotos do Fe E2E {SUFFIX}"
 VENDOR_USER = f"vendedor_e2e_{SUFFIX}"
@@ -125,7 +125,7 @@ admin_session.post(f"{BASE}/vendors/create/", data={
 }, headers={"Referer": f"{BASE}/"})
 dash = admin_session.get(f"{BASE}/")
 assert PB_NAME in dash.text
-pb_vendor_id = re.search(r"/vendors/(\d+)/modules/", dash.text).group(1)  # o mais novo vem primeiro
+pb_vendor_id = re.search(r"/vendors/(\d+)/\"", dash.text).group(1)  # o mais novo vem primeiro
 print(f"[OK] Super admin criou a revenda só Photobooth (id {pb_vendor_id})")
 
 pb_session = requests.Session()
@@ -171,5 +171,70 @@ resp = issue(pb_session, pb_customer, "360")
 key_360 = re.findall(r"<code>(CAM3-[A-Z0-9-]+)</code>", resp.text)
 assert len(key_360) == 2, "a licença 360 deveria ter sido emitida"
 print("[OK] Troca de módulos vale só pras novas emissões; licença já vendida intacta")
+
+# --- 7. gestão de clientes: admin edita vendedores, vendedor edita clientes finais ---
+resp = admin_session.get(f"{BASE}/vendors/{pb_vendor_id}/")
+assert PB_NAME in resp.text and PB_USER in resp.text and "Cliente Photobooth" in resp.text
+csrf = get_csrf(admin_session, f"{BASE}/vendors/{pb_vendor_id}/")[0]
+
+# usuário duplicado é recusado (sem erro 500)
+resp = admin_session.post(f"{BASE}/vendors/create/", data={
+    "name": "Duplicado", "username": PB_USER, "password": "x12345", "csrfmiddlewaretoken": csrf},
+    headers={"Referer": f"{BASE}/"})
+assert resp.status_code == 200 and "já existe" in resp.text
+print("[OK] Usuário duplicado é recusado")
+
+# editar dados/módulos
+NEW_NAME = PB_NAME + " Editada"
+resp = admin_session.post(f"{BASE}/vendors/{pb_vendor_id}/update/", data={
+    "name": NEW_NAME, "primary_color": "#112233", "sells_360": "on", "sells_photobooth": "on",
+    "csrfmiddlewaretoken": csrf}, headers={"Referer": f"{BASE}/"})
+assert NEW_NAME in resp.text and "#112233" in resp.text
+print("[OK] Admin editou nome/cor/módulos do cliente vendedor")
+
+# redefinir senha e adicionar outro login
+user_id = re.search(r"/logins/(\d+)/password/", resp.text).group(1)
+resp = admin_session.post(f"{BASE}/vendors/{pb_vendor_id}/logins/{user_id}/password/", data={
+    "password": "novasenha123", "csrfmiddlewaretoken": csrf}, headers={"Referer": f"{BASE}/"})
+assert "redefinida" in resp.text
+fresh = requests.Session()
+login(fresh, PB_USER, "novasenha123")
+extra_user = f"{PB_USER}_b"
+resp = admin_session.post(f"{BASE}/vendors/{pb_vendor_id}/logins/create/", data={
+    "username": extra_user, "password": "outra12345", "csrfmiddlewaretoken": csrf},
+    headers={"Referer": f"{BASE}/"})
+assert extra_user in resp.text
+login(requests.Session(), extra_user, "outra12345")
+print("[OK] Senha redefinida e segundo login criado (ambos entram)")
+
+# vendedor edita e exclui cliente final
+csrf = get_csrf(fresh, f"{BASE}/customers/{pb_customer}/")[0]
+resp = fresh.post(f"{BASE}/customers/{pb_customer}/update/", data={
+    "name": "Cliente Photobooth Editado", "email": "novo@example.com", "phone": "1", "notes": "x",
+    "csrfmiddlewaretoken": csrf}, headers={"Referer": f"{BASE}/"})
+assert "Cliente Photobooth Editado" in resp.text and "novo@example.com" in resp.text
+resp = fresh.post(f"{BASE}/customers/{pb_customer}/delete/", data={"csrfmiddlewaretoken": csrf},
+                  headers={"Referer": f"{BASE}/"})
+assert "não pode ser excluído" in resp.text, "cliente com licença não pode ser excluído"
+csrf = get_csrf(fresh, f"{BASE}/")[0]
+resp = fresh.post(f"{BASE}/customers/create/", data={"name": "Sem licença", "csrfmiddlewaretoken": csrf},
+                  headers={"Referer": f"{BASE}/"})
+empty_customer = re.search(r"/customers/(\d+)/", resp.text).group(1)
+csrf = get_csrf(fresh, f"{BASE}/customers/{empty_customer}/")[0]
+resp = fresh.post(f"{BASE}/customers/{empty_customer}/delete/", data={"csrfmiddlewaretoken": csrf},
+                  headers={"Referer": f"{BASE}/"})
+assert "excluído" in resp.text and "Sem licença" not in resp.text.split("Clientes</h2>")[-1]
+print("[OK] Vendedor edita cliente final; exclusão só sem licenças")
+
+# um vendedor não mexe em cliente de outro, nem abre as telas do admin
+other = requests.Session()
+login(other, VENDOR_USER, "vendedor12345")
+csrf = get_csrf(other, f"{BASE}/")[0]
+resp = other.post(f"{BASE}/customers/{pb_customer}/update/", data={
+    "name": "invasor", "csrfmiddlewaretoken": csrf}, headers={"Referer": f"{BASE}/"})
+assert resp.status_code == 404
+resp = other.get(f"{BASE}/vendors/{pb_vendor_id}/")
+assert NEW_NAME not in resp.text, "vendedor não pode abrir a gestão do admin"
+print("[OK] Isolamento: vendedor não edita cliente de outro nem abre telas do admin")
 
 print("\nTUDO OK - fluxo completo funcionando de ponta a ponta.")

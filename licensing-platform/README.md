@@ -9,8 +9,10 @@ consulta essa plataforma pra validar a licença antes de rodar
 
 ## Módulos (Giro 360° / Photobooth)
 
-O Camera360 é 2 em 1 e cada licença libera **Giro 360°**, **Photobooth** ou
-**os dois** (`License.modules`: `360` / `photobooth` / `both`). O super admin
+O Camera360 são dois programas separados - **Giro360** (módulo Giro 360°) e
+**FotoCabine** (módulo Photobooth) - e cada licença libera um deles ou **os dois**
+(`License.modules`: `360` / `photobooth` / `both`). Cada programa só abre se a
+licença incluir o módulo dele (a licença "ambos" abre os dois). O super admin
 define, por vendedor, o que ele pode licenciar (checkboxes ao criar o
 vendedor e na lista de vendedores - o vendedor só vende o que comprou do
 super admin); ao emitir cada licença, o vendedor escolhe entre os módulos
