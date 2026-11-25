@@ -33,3 +33,7 @@ strip_assets/
 # Chave de licenca ativada + id da maquina - identifica essa instalacao
 # especifica, nunca versionar
 license.json
+
+# Log do executavel (erros no cliente) e ffmpeg copiado pelo build_products.ps1
+app.log
+ffmpeg-bundled/

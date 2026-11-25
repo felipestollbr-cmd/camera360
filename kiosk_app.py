@@ -22,6 +22,7 @@ from gopro_controller import GoProWifiController
 import location as geo
 from widgets import PillButton, Card, BG_CARD
 import app_config
+import product
 import event_manager
 import license_client
 import motor_controller
@@ -64,14 +65,15 @@ STATE_STRIP_EDITOR = "strip_editor"
 MODE_VIDEO = "video"
 MODE_STRIP = "strip"
 
-# Módulos que a licença pode liberar (ids que a plataforma devolve em "modules").
-ALL_MODULES = {"video360", "photobooth"}
+# Módulos que a licença pode liberar (ids que a plataforma devolve em "modules"). Cada
+# produto (product.py) só trabalha com o seu: Giro360 = video360, FotoCabine = photobooth.
+ALL_MODULES = {product.current()["module"]}
 
 
 class Camera360Kiosk:
     def __init__(self, root, splash=None, splash_started=None, splash_min_seconds=2.5):
         self.root = root
-        self.root.title("Camera360")
+        self.root.title(product.current()["name"])
         self.root.geometry("1024x768")
         self.root.configure(bg=BG_ROOT)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -86,6 +88,7 @@ class Camera360Kiosk:
         self._splash_min_seconds = splash_min_seconds
 
         self.config = app_config.load_config()
+        self.root.title(self.config.get("brand_name") or product.current()["name"])
         self.events_data = event_manager.load_events()
         self.motor = motor_controller.MotorController(self.config["motor"])
         self.share_backend = qr_share.LocalShareBackend(OUTPUT_DIR, port=self.config["share_port"])
@@ -116,12 +119,14 @@ class Camera360Kiosk:
 
         self._setup_style()
         self._build_screens()
+        if self._splash is not None:
+            self._splash.bring_to_front()  # as telas recém-criadas ficam por cima; a splash volta ao topo
         self.root.update_idletasks()
 
         self._update_active_event_label()
         self._set_state(STATE_ACTIVATION)
         if self._splash is not None:
-            self._splash.lift()
+            self._splash.bring_to_front()
             self._splash.set_status("Verificando licença...")
         self._check_license(initial=True)
 
@@ -180,6 +185,7 @@ class Camera360Kiosk:
 
     def _set_state(self, state):
         self.state = state
+        print(f"[{time.strftime('%H:%M:%S')}] estado -> {state}", flush=True)  # vai pro app.log no executável
         # --- overlays exclusivos do camera_screen: um por estado ---
         overlays = {
             STATE_IDLE: (self.idle_overlay, {"relx": 0.5, "rely": 0.5, "anchor": "center"}),
@@ -229,7 +235,7 @@ class Camera360Kiosk:
         center = tk.Frame(screen, bg=BG_ROOT)
         center.place(relx=0.5, rely=0.5, anchor="center")
 
-        tk.Label(center, text=self.config.get("brand_name") or "Camera360", font=("Segoe UI", 28, "bold"),
+        tk.Label(center, text=self.config.get("brand_name") or product.current()["name"], font=("Segoe UI", 28, "bold"),
                  bg=BG_ROOT, fg=FG_TEXT).pack(pady=(0, 4))
         self.activation_status_label = tk.Label(
             center, text="Verificando licença...", font=("Segoe UI", 13),
@@ -268,6 +274,7 @@ class Camera360Kiosk:
                 return
             self._dismiss_splash()
 
+        result = self._require_product_module(result)
         if result.get("valid"):
             self._set_modules(result)
             if initial:
@@ -308,7 +315,21 @@ class Camera360Kiosk:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _require_product_module(self, result):
+        """Licença válida mas sem o módulo deste produto (ex.: licença só de
+        FotoCabine tentando abrir o Giro360) vira 'inválida' com mensagem
+        clara. Servidor antigo, sem o campo "modules" = tudo liberado."""
+        if not result.get("valid"):
+            return result
+        modules = result.get("modules")
+        if modules is None or product.current()["module"] in modules:
+            return result
+        return {"valid": False,
+                "message": f"Esta licença não inclui o {product.current()['name']}. "
+                           "Fale com o seu fornecedor."}
+
     def _on_activation_result(self, result):
+        result = self._require_product_module(result)
         if result.get("valid"):
             self._set_modules(result)
             self._start_app()
@@ -363,7 +384,7 @@ class Camera360Kiosk:
         top_bar.pack(fill=tk.X, side=tk.TOP)
         top_body = ttk.Frame(top_bar, style="Dark.TFrame")
         top_body.pack(fill=tk.X, padx=16, pady=8)
-        ttk.Label(top_body, text=self.config.get("brand_name") or "Camera360",
+        ttk.Label(top_body, text=self.config.get("brand_name") or product.current()["name"],
                   style="Brand.TLabel").pack(side=tk.LEFT)
         self.status_dot = tk.Canvas(top_body, width=10, height=10, bg=BG_PANEL, highlightthickness=0)
         self.status_dot.pack(side=tk.LEFT, padx=(16, 6))

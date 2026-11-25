@@ -1,4 +1,4 @@
-"""Resolve the closure of MSYS2 UCRT64 DLLs needed to run Camera360 standalone.
+"""Resolve the closure of MSYS2 UCRT64 DLLs needed to run the Camera360 products standalone.
 
 Walks the PE import table of a set of seed files (gphoto2 native libs/plugins,
 tkinter) via `objdump -p` and follows every dependency that resolves to a file

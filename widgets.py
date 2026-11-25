@@ -238,6 +238,7 @@ class PillButton(tk.Canvas):
 
     def _on_click(self, _event):
         if self.command and not self._disabled:
+            print(f"clique no botão: {self.text!r}", flush=True)
             self.command()
 
     def _on_enter(self, _event):

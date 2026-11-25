@@ -87,8 +87,10 @@ def apply(accent=None):
     l = min(max(l, 0.45), 0.66)
     s = max(s, 0.6)
     ACCENT = _from_hls(h, l, s)
-    ACCENT2 = _from_hls(h + 40 / 360, max(l, 0.55), max(s, 0.75))
-    ACCENT3 = _from_hls(h + 80 / 360, max(l, 0.58), max(s, 0.8))
+    # laranja/amarelo vão pra vermelho/rosa em vez de cair no verde-limão
+    step = (-35 if 15 <= h * 360 < 75 else 35) / 360
+    ACCENT2 = _from_hls(h + step, max(l, 0.55), max(s, 0.75))
+    ACCENT3 = _from_hls(h + step * 2, max(l, 0.58), max(s, 0.8))
     GRADIENT = (ACCENT, ACCENT2, ACCENT3)
     TEXT_ON_ACCENT = "#ffffff" if luminance(ACCENT) < 0.62 else "#1a1330"
 
@@ -226,9 +228,11 @@ def glow_image(width, height, color, strength=0.5):
     """Mancha de luz suave (elipse borrada) pra decorar fundos."""
     img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     r, g, b = hex_to_rgb(color)
-    ImageDraw.Draw(img).ellipse([width * 0.1, height * 0.1, width * 0.9, height * 0.9],
+    # elipse bem dentro da imagem e blur menor que a margem: a borda termina
+    # transparente (sem corte reto no fundo)
+    ImageDraw.Draw(img).ellipse([width * 0.25, height * 0.25, width * 0.75, height * 0.75],
                                 fill=(r, g, b, int(255 * strength)))
-    return img.filter(ImageFilter.GaussianBlur(min(width, height) * 0.18))
+    return img.filter(ImageFilter.GaussianBlur(min(width, height) * 0.13))
 
 
 def confetti_piece_image(size, color, shape):
@@ -255,10 +259,10 @@ def festive_background(width, height, accent, seed=7, confetti=True):
     width, height = max(64, int(width)), max(64, int(height))
     stops = (mix(BG_ROOT, ACCENT, 0.30), BG_ROOT, mix(BG_ROOT, ACCENT2, 0.26))
     img = gradient_image(width, height, stops, "d").convert("RGBA")
-    glow_a = glow_image(int(width * 0.7), int(height * 0.7), ACCENT, 0.35)
-    glow_b = glow_image(int(width * 0.6), int(height * 0.6), ACCENT2, 0.28)
-    img.alpha_composite(glow_a, (-int(width * 0.15), -int(height * 0.2)))
-    img.alpha_composite(glow_b, (int(width * 0.6), int(height * 0.55)))
+    glow_a = glow_image(int(width * 1.0), int(height * 1.0), ACCENT, 0.5)
+    glow_b = glow_image(int(width * 0.9), int(height * 0.9), ACCENT2, 0.4)
+    img.alpha_composite(glow_a, (-int(width * 0.3), -int(height * 0.35)))
+    img.alpha_composite(glow_b, (int(width * 0.4), int(height * 0.3)))
     if confetti:
         rng = random.Random(seed)
         for _ in range(int(width * height / 22000)):

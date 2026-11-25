@@ -1,6 +1,6 @@
 """Stage MSYS2 UCRT64 native files into a local folder PyInstaller can pick up.
 
-Run this before `pyinstaller Camera360.spec`. It copies:
+Run this before `pyinstaller Product.spec (veja build_scripts/build_products.ps1)`. It copies:
   - libgphoto2/libgphoto2_port + their full transitive DLL closure -> dist_native/
   - camlibs/iolibs plugin DLLs -> dist_native/gphoto2_camlibs, dist_native/gphoto2_iolibs
     (matching the layout gphoto2/__init__.py already looks for at runtime)
